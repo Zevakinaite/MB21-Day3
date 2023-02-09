@@ -39,13 +39,15 @@ Let's have a cursory look at the data, especially check the distribution of the 
 ### `head()`
 
 ```{r}
-
+data_vac %>% head()
 ```
 
 ### Check the distribution of the output
 
 ```{r}
-
+data_vac %>%
+  ggplot(aes(x = Booster_Doses_18Plus_Vax_Pct)) +
+  geom_density()
 ```
 
 ```{r}
@@ -62,7 +64,11 @@ Let's have a cursory look at the data, especially check the distribution of the 
 
 
 ```{r}
+names(data_vac)
 
+data_vac_use <- data_vac %>%
+  select(Booster_Doses_18Plus_Vax_Pct, Black, Hispanic, IncomePerCap, Poverty, ChildPoverty, Unemployment, pct_trump) %>% 
+  drop_na()
 ```
 
 ## Data preparation
@@ -77,13 +83,20 @@ Using `caret` (or something else if you like), prepare two datasets of pre-proce
 ## Train-test split
 
 ```{r}
-
+set.seed(202302)
+partition <- createDataPartition(data_vac_use$Booster_Doses_18Plus_Vax_Pct, p = .8, list = F)
+vac_train_c <- data_vac_use %>% slice(partition)
+vac_test_c <- data_vac_use %>% slice(-partition)
 ```
 
 ## Preprocess
 
 ```{r}
+vac_train_X <- vac_train_c %>% select(-Booster_Doses_18Plus_Vax_Pct) # the dependant variable (and any dummy variables) should not be included in the preprocessing
+vac_prep <- preProcess(x = vac_train_X, method = c("center", "scale"))
 
+vac_train_c_processed <- predict(vac_prep, vac_train_c)
+vac_test_c_processed <- predict(vac_prep, vac_test_c)
 ```
 
 
@@ -95,10 +108,21 @@ Using `caret` (or something else if you like), prepare two datasets of pre-proce
 - Evaluate the model
 
 ```{r}
-
+vac_model_linear <- lm(Booster_Doses_18Plus_Vax_Pct ~ ., data = vac_train_c_processed)
+summary(vac_model_linear)
 ```
-```{r}
 
+```{r}
+#Prediction
+Y_train <- vac_train_c_processed$Booster_Doses_18Plus_Vax_Pct
+Y_hat_train <- predict(vac_model_linear)
+
+RMSE_train <- (Y_train - Y_hat_train)^2 %>% mean %>%sqrt()
+
+Y_test <- vac_test_c_processed$Booster_Doses_18Plus_Vax_Pct
+Y_hat_test <- predict(vac_model_linear, newdata = vac_test_c_processed)
+
+RMSE_test <- (Y_test - Y_hat_test)^2 %>% mean %>% sqrt()
 ```
 
 ### Additional movel evaluations
@@ -115,7 +139,23 @@ Using the linear regression model as the baseline we attempt two things:
 
 
 ```{r}
+set.seed(123)
+  ctrl <- trainControl(method = "repeatedcv",
+  number = 5,
+  repeats = 10)
 
+vac_knn <- train(Booster_Doses_18Plus_Vax_Pct ~ .,
+  data = vac_train_c_processed,
+  method = "knn", trControl = ctrl,
+  tuneGrid = data.frame(k = c(1:10, 20, 30)))
+
+y_hat <- predict(vac_knn)
+
+RMSE_train_knn <- (vac_train_c_processed$Booster_Doses_18Plus_Vax_Pct - y_hat_test)^2 %>% mean %>% sqrt
+
+y_hat_test <- predict(vac_knn, newdata = vac_test_c_processed)
+
+RMSE_test_knn <- (vac_test_c_processed$Booster_Doses_18Plus_Vax_Pct - Y_hat_test)^2 %>% mean %>% sqrt()
 ```
 
 ### SVM with Radial Kernel
