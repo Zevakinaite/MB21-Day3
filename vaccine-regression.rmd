@@ -46,12 +46,14 @@ data_vac %>% head()
 
 ```{r}
 data_vac %>%
-  ggplot(aes(x = Booster_Doses_18Plus_Vax_Pct)) +
+  ggplot(aes(Booster_Doses_18Plus_Vax_Pct)) +
   geom_density()
 ```
 
 ```{r}
-
+data_vac %>%
+  pull(Booster_Doses_18Plus_Vax_Pct) %>%
+  summary()
 ```
 
 
@@ -67,7 +69,7 @@ data_vac %>%
 names(data_vac)
 
 data_vac_use <- data_vac %>%
-  select(Booster_Doses_18Plus_Vax_Pct, Black, Hispanic, IncomePerCap, Poverty, ChildPoverty, Unemployment, pct_trump) %>% 
+  select(Booster_Doses_18Plus_Vax_Pct, TotalPop, Hispanic, White, Black, Income, IncomePerCap, Poverty, ChildPoverty, WorkAtHome,Unemployment, pct_trump) %>%
   drop_na()
 ```
 
@@ -84,7 +86,7 @@ Using `caret` (or something else if you like), prepare two datasets of pre-proce
 
 ```{r}
 set.seed(202302)
-partition <- createDataPartition(data_vac_use$Booster_Doses_18Plus_Vax_Pct, p = .8, list = F)
+partition <- createDataPartition(data_vac_use$Booster_Doses_18Plus_Vax_Pct, p = .7, list = F)
 vac_train_c <- data_vac_use %>% slice(partition)
 vac_test_c <- data_vac_use %>% slice(-partition)
 ```
@@ -93,7 +95,7 @@ vac_test_c <- data_vac_use %>% slice(-partition)
 
 ```{r}
 vac_train_X <- vac_train_c %>% select(-Booster_Doses_18Plus_Vax_Pct) # the dependant variable (and any dummy variables) should not be included in the preprocessing
-vac_prep <- preProcess(x = vac_train_X, method = c("center", "scale"))
+vac_prep <- preProcess(vac_train_X, method = c("center", "scale"))
 
 vac_train_c_processed <- predict(vac_prep, vac_train_c)
 vac_test_c_processed <- predict(vac_prep, vac_test_c)
@@ -115,7 +117,7 @@ summary(vac_model_linear)
 ```{r}
 #Prediction
 Y_train <- vac_train_c_processed$Booster_Doses_18Plus_Vax_Pct
-Y_hat_train <- predict(vac_model_linear)
+Y_hat_train <- predict(vac_model_linear, newdata = vac_train_c_processed)
 
 RMSE_train <- (Y_train - Y_hat_train)^2 %>% mean %>%sqrt()
 
@@ -142,26 +144,26 @@ Using the linear regression model as the baseline we attempt two things:
 set.seed(123)
   ctrl <- trainControl(method = "repeatedcv",
   number = 5,
-  repeats = 10)
+  repeats = 3)
 
 vac_knn <- train(Booster_Doses_18Plus_Vax_Pct ~ .,
   data = vac_train_c_processed,
   method = "knn", trControl = ctrl,
-  tuneGrid = data.frame(k = c(1:10, 20, 30)))
+  tuneGrid = expand.grid(k = c(2:10, 15, 20, 30, 50)))
 
-y_hat <- predict(vac_knn)
-
-RMSE_train_knn <- (vac_train_c_processed$Booster_Doses_18Plus_Vax_Pct - y_hat_test)^2 %>% mean %>% sqrt
-
-y_hat_test <- predict(vac_knn, newdata = vac_test_c_processed)
-
-RMSE_test_knn <- (vac_test_c_processed$Booster_Doses_18Plus_Vax_Pct - Y_hat_test)^2 %>% mean %>% sqrt()
+vac_knn
 ```
 
 ### SVM with Radial Kernel
 
 ```{r}
+y_hat_train <- predict(vac_knn, newdata = vac_train_c_processed)
 
+RMSE_train_knn <- (vac_train_c_processed$Booster_Doses_18Plus_Vax_Pct - y_hat_train)^2 %>% mean %>% sqrt
+
+y_hat_test <- predict(vac_knn, newdata = vac_test_c_processed)
+
+RMSE_test_knn <- (vac_test_c_processed$Booster_Doses_18Plus_Vax_Pct - Y_hat_test)^2 %>% mean %>% sqrt()
 ```
 
 
@@ -174,7 +176,35 @@ RMSE_test_knn <- (vac_test_c_processed$Booster_Doses_18Plus_Vax_Pct - Y_hat_test
 ### LASSO Outcome
 
 ```{r}
+#Data preparation
+vac_train_X <- vac_train_c_processed %>%
+  select(-Booster_Doses_18Plus_Vax_Pct) %>% as.matrix()
+vac_train_Y <- vac_train_c_processed$Booster_Doses_18Plus_Vax_Pct
 
+vac_test_X <- vac_test_c_processed %>%
+  select(-Booster_Doses_18Plus_Vax_Pct) %>% as.matrix()
+vac_test_Y <- vac_test_c_processed$Booster_Doses_18Plus_Vax_Pct
+```
+
+```{r}
+#Lasso regression estimation
+vac_model_lasso <- cv.glmnet(vac_train_X, vac_train_Y,
+  alpha = 1,                                                # 1 for lasso, if alpha = 0 this runs ridge regression
+  type.measure = "mse",
+  family = "gaussian")
+
+coef(vac_model_lasso) # glmnet chooses final lambda (and therefore nr of variables) based on increase in RMSE against best model
+plot(vac_model_lasso)
+plot(vac_model_lasso$glmnet.fit, xvar = "lambda")
+```
+
+```{r}
+#Lasso RMSE
+pred_train_lasso <- as.vector(predict(vac_model_lasso, vac_train_X))
+RMSE_train_lasso <- (vac_train_Y - pred_train_lasso)^2 %>% mean %>% sqrt()
+
+pred_test_lasso <- as.vector(predict(vac_model_lasso, vac_test_X))
+RMSE_test_lasso <- (vac_test_Y - pred_test_lasso)^2 %>% mean %>% sqrt()
 ```
 
 #### Plot with `plot_glmnet`
@@ -182,7 +212,7 @@ RMSE_test_knn <- (vac_test_c_processed$Booster_Doses_18Plus_Vax_Pct - Y_hat_test
 Shrinkage plot of `glmnet` is not informative as it won't show the variable name. Instead you can use `plot_glmnet` in `plotmo` package.
 
 ```{r}
-
+plotmo::plot_glmnet(vac_model_lasso$glmnet.fit, xvar = "lambda")
 ```
 
 
@@ -190,13 +220,29 @@ Shrinkage plot of `glmnet` is not informative as it won't show the variable name
 ### Ridge regression outcome
 
 ```{r}
+#Ridge regression estimation
+vac_model_ridge <- cv.glmnet(vac_train_X, vac_train_Y,
+  alpha = 0,                                                # 1 for lasso, if alpha = 0 this runs ridge regression
+  type.measure = "mse",
+  family = "gaussian")
 
+coef(vac_model_ridge) # glmnet chooses final lambda (and therefore nr of variables) based on increase in RMSE against best model
+plot(vac_model_ridge)
+plot(vac_model_ridge$glmnet.fit, xvar = "lambda")
+```
+```{r}
+#Ridge RMSE
+pred_train_ridge <- as.vector(predict(vac_model_ridge, vac_train_X))
+RMSE_train_ridge <- (vac_train_Y - pred_train_ridge)^2 %>% mean %>% sqrt()
+
+pred_test_ridge <- as.vector(predict(vac_model_ridge, vac_test_X))
+RMSE_test_ridge <- (vac_test_Y - pred_test_ridge)^2 %>% mean %>% sqrt()
 ```
 
 #### Plot with `plot_glmnet`
 
 ```{r}
-
+plotmo::plot_glmnet(vac_model_ridge$glmnet.fit, xvar = "lambda")
 ```
 
 ### Compare coefs: lm, lasso/ridge
@@ -204,5 +250,6 @@ Shrinkage plot of `glmnet` is not informative as it won't show the variable name
 Compare the cefficients across the models. What do you find?
 
 ```{r}
-
+data.frame(linear = RMSE_test, KNN = RMSE_test_knn, LASSO = RMSE_test_lasso, ridge = RMSE_test_ridge)
+data.frame(linear = RMSE_train, KNN = RMSE_train_knn, LASSO = RMSE_train_lasso, ridge = RMSE_train_ridge)
 ```
